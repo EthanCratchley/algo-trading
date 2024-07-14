@@ -1,10 +1,29 @@
 import backtrader as bt
-import pandas as pd
 
-class StopBreakoutStrategy(bt.Strategy):
+class KellyCriterionSizer(bt.Sizer):
+    def __init__(self):
+        self.win_rate = 0.5  # Initial estimated win rate
+        self.payoff_ratio = 1.5  # Initial estimated payoff ratio
+        self.kelly_fraction = self.calculate_kelly_fraction()
+
+    def calculate_kelly_fraction(self):
+        # Kelly formula
+        W = self.win_rate
+        R = self.payoff_ratio
+        kelly_fraction = W - (1 - W) / R
+        return max(0, min(kelly_fraction, 1))  # Bound between 0 and 1
+
+    def _getsizing(self, comminfo, cash, data, isbuy):
+        # Calculate position size using Kelly Criterion
+        size = (cash * self.kelly_fraction) // data.close[0]
+        return size
+
+class ImprovedStopBreakoutStrategy(bt.Strategy):
     params = (
         ('lookback', 20),
         ('exit_after', 10),  # Exit after x bars
+        ('stop_loss', 0.02),  # Stop loss as a percentage
+        ('take_profit', 0.05),  # Take profit as a percentage
     )
 
     def __init__(self):
@@ -22,34 +41,34 @@ class StopBreakoutStrategy(bt.Strategy):
             if self.data.close[0] >= self.highest_high[0]:
                 self.buy_order = self.buy()
                 self.bar_executed = len(self)
+                self.stop_loss_price = self.data.close[0] * (1 - self.params.stop_loss)
+                self.take_profit_price = self.data.close[0] * (1 + self.params.take_profit)
             elif self.data.close[0] <= self.lowest_low[0]:
                 self.sell_order = self.sell()
                 self.bar_executed = len(self)
+                self.stop_loss_price = self.data.close[0] * (1 + self.params.stop_loss)
+                self.take_profit_price = self.data.close[0] * (1 - self.params.take_profit)
         else:
-            if self.buy_order and self.data.close[0] <= self.lowest_low[0]:
-                self.close()  # Close the long position
-                self.sell_order = self.sell()
-                self.buy_order = None
-                self.bar_executed = len(self)
-            elif self.sell_order and self.data.close[0] >= self.highest_high[0]:
-                self.close()  # Close the short position
-                self.buy_order = self.buy()
-                self.sell_order = None
-                self.bar_executed = len(self)
-
-            # Exit after specified number of bars
-            if len(self) >= self.bar_executed + self.params.exit_after:
-                self.close()
+            if self.position.size > 0:  # Long position
+                if self.data.close[0] <= self.stop_loss_price or self.data.close[0] >= self.take_profit_price:
+                    self.close()
+                elif len(self) >= self.bar_executed + self.params.exit_after:
+                    self.close()
+            elif self.position.size < 0:  # Short position
+                if self.data.close[0] >= self.stop_loss_price or self.data.close[0] <= self.take_profit_price:
+                    self.close()
+                elif len(self) >= self.bar_executed + self.params.exit_after:
+                    self.close()
 
 if __name__ == '__main__':
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname='fit1.csv',
+        dataname='fit5.csv',
         dtformat=('%Y-%m-%d'),
         datetime=0,
+        open=1,
         high=2,
         low=3,
-        open=1,
         close=4,
         volume=6,
         openinterest=-1  # -1 indicates no open interest column in CSV
@@ -62,7 +81,10 @@ if __name__ == '__main__':
     cerebro.adddata(data)
 
     # Add strategy to Cerebro
-    cerebro.addstrategy(StopBreakoutStrategy)
+    cerebro.addstrategy(ImprovedStopBreakoutStrategy)
+
+    # Add Kelly Criterion Sizer to Cerebro
+    cerebro.addsizer(KellyCriterionSizer)
 
     # Set our desired cash start
     cerebro.broker.set_cash(10000.0)
