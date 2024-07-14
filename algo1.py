@@ -1,4 +1,5 @@
 import backtrader as bt
+import numpy as np
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
@@ -38,6 +39,7 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
         self.total_losses = 0
         self.total_profit = 0
         self.total_loss = 0
+        self.returns = []
 
     def notify_trade(self, trade):
         if trade.justopened:
@@ -84,10 +86,39 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
         self.win_rate = self.total_wins / self.total_trades if self.total_trades > 0 else 0
         self.average_payoff = (self.total_profit / self.total_wins) / (self.total_loss / self.total_losses) if self.total_wins > 0 and self.total_losses > 0 else 0
 
+class SortinoRatio(bt.Analyzer):
+    def create_analysis(self):
+        self.rets = []
+
+    def notify_trade(self, trade):
+        if trade.isclosed:
+            self.rets.append(trade.pnlcomm / self.strategy.broker.getvalue())
+
+    def get_analysis(self):
+        neg_rets = [r for r in self.rets if r < 0]
+        sortino_ratio = np.mean(self.rets) / (np.std(neg_rets) if neg_rets else 1)
+        return sortino_ratio
+
+class CalmarRatio(bt.Analyzer):
+    def __init__(self):
+        self.drawdowns = []
+        self.returns = []
+
+    def notify_trade(self, trade):
+        if trade.isclosed:
+            self.returns.append(trade.pnlcomm / self.strategy.broker.getvalue())
+            self.drawdowns.append(self.strategy.analyzers.drawdown.get_analysis().max.drawdown)
+
+    def get_analysis(self):
+        annual_return = np.mean(self.returns) * 252  # Assuming 252 trading days in a year
+        max_drawdown = max(self.drawdowns)
+        calmar_ratio = annual_return / max_drawdown if max_drawdown else 1
+        return calmar_ratio
+
 if __name__ == '__main__':
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname='fit5.csv',
+        dataname='ARM.csv',
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -120,6 +151,8 @@ if __name__ == '__main__':
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+    cerebro.addanalyzer(SortinoRatio, _name='sortino')
+    cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # Run the strategy
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
@@ -131,9 +164,13 @@ if __name__ == '__main__':
     sharpe_ratio = strat.analyzers.sharpe.get_analysis()
     drawdown = strat.analyzers.drawdown.get_analysis()
     returns = strat.analyzers.returns.get_analysis()
+    sortino_ratio = strat.analyzers.sortino.get_analysis()
+    calmar_ratio = strat.analyzers.calmar.get_analysis()
 
     # Print the performance metrics
     print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
+    print('Sortino Ratio:', sortino_ratio)
+    print('Calmar Ratio:', calmar_ratio)
     print('Max Drawdown:', drawdown.max.drawdown)
     print('Max Drawdown Duration:', drawdown.max.len)
     print('Total Return:', returns['rtot'])
