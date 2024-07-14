@@ -3,8 +3,8 @@ import numpy as np
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
-        self.win_rate = 0.50  # Initial estimated win rate
-        self.payoff_ratio = 1.30  # Initial estimated payoff ratio
+        self.win_rate = 0.544  # Initial estimated win rate
+        self.payoff_ratio = 1.80  # Initial estimated payoff ratio
         self.kelly_fraction = self.calculate_kelly_fraction()
 
     def calculate_kelly_fraction(self):
@@ -39,7 +39,8 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
         self.total_losses = 0
         self.total_profit = 0
         self.total_loss = 0
-        self.returns = []
+        self.initial_value = 0
+        self.final_value = 0
 
     def notify_trade(self, trade):
         if trade.justopened:
@@ -82,7 +83,11 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
                 elif len(self) >= self.bar_executed + self.params.exit_after:
                     self.close()
 
+    def start(self):
+        self.initial_value = self.broker.getvalue()
+
     def stop(self):
+        self.final_value = self.broker.getvalue()
         self.win_rate = self.total_wins / self.total_trades if self.total_trades > 0 else 0
         self.average_payoff = (self.total_profit / self.total_wins) / (self.total_loss / self.total_losses) if self.total_wins > 0 and self.total_losses > 0 else 0
 
@@ -118,7 +123,7 @@ class CalmarRatio(bt.Analyzer):
 if __name__ == '__main__':
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname='ARM.csv',
+        dataname='NVDA.csv',
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -175,11 +180,11 @@ if __name__ == '__main__':
     print('Max Drawdown Duration:', drawdown.max.len)
     print('Total Return:', returns['rtot'])
     print('Annualized Return:', returns['rnorm'])
-    print('Cumulative Return:', returns['rnorm100'])
+    print('Cumulative Return:', (strat.final_value - strat.initial_value) / strat.initial_value)
+    print('Total Commission Costs:', strat.total_commissions)
 
     # Print additional performance metrics
     print('Total Trades:', strat.total_trades)
-    print('Total Commission Costs:', strat.total_commissions)
     print('Win Rate:', strat.win_rate)
     print('Average Trade Payoff Ratio:', strat.average_payoff)
 
