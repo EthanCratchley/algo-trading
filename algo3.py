@@ -20,10 +20,8 @@ class KellyCriterionSizer(bt.Sizer):
         size = (cash * self.kelly_fraction) // data.close[0]
         return size
 
-class SimplePricePattern(bt.Strategy):
+class PriceSpikeStrategy(bt.Strategy):
     params = (
-        ('up_days', 3),
-        ('down_days', 3),
         ('trail_percent', 0.05),  
     )
 
@@ -44,14 +42,15 @@ class SimplePricePattern(bt.Strategy):
         self.sell_price = None
 
     def next(self):
-        if len(self.dataclose) < max(self.params.up_days, self.params.down_days):
+        if len(self.dataclose) < 2:
             return
 
-        if all(self.dataclose[-i] > self.dataclose[-i-1] for i in range(1, self.params.up_days + 1)):
+        # Entry conditions
+        if self.dataclose[0] >= self.dataclose[-1] * 1.05:
             self.buy_signal = True
             self.short_signal = False
             print(f"Buy signal on {self.datas[0].datetime.date(0)} at price {self.dataclose[0]}")
-        elif all(self.dataclose[-i] < self.dataclose[-i-1] for i in range(1, self.params.down_days + 1)):
+        elif self.dataclose[0] <= self.dataclose[-1] * 0.95:
             self.buy_signal = False
             self.short_signal = True
             print(f"Sell signal on {self.datas[0].datetime.date(0)} at price {self.dataclose[0]}")
@@ -59,6 +58,7 @@ class SimplePricePattern(bt.Strategy):
             self.buy_signal = False
             self.short_signal = False
 
+        # Execute orders based on signals
         if not self.position:
             size = self.broker.get_cash() * 0.1 // self.dataclose[0]
             if self.buy_signal:
@@ -70,11 +70,13 @@ class SimplePricePattern(bt.Strategy):
                 self.order = self.sell(size=size)
                 print(f"Sell order placed at {self.dataclose[0]} for size {size}")
         else:
-            if self.position.size > 0:  # Long position
+            # Exit conditions for long position
+            if self.position.size > 0:
                 if self.dataclose[0] <= self.buy_price * (1 - self.params.trail_percent) or self.dataclose[0] >= self.buy_price * (1 + self.params.trail_percent):
                     self.close()
                     print(f"Closing long position at {self.dataclose[0]}")
-            elif self.position.size < 0:  # Short position
+            # Exit conditions for short position
+            elif self.position.size < 0:
                 if self.dataclose[0] >= self.sell_price * (1 + self.params.trail_percent) or self.dataclose[0] <= self.sell_price * (1 - self.params.trail_percent):
                     self.close()
                     print(f"Closing short position at {self.dataclose[0]}")
@@ -146,7 +148,7 @@ if __name__ == '__main__':
     cerebro = bt.Cerebro()
 
     data = bt.feeds.GenericCSVData(
-        dataname='TSLA.csv',
+        dataname='AMD.csv',
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -158,7 +160,7 @@ if __name__ == '__main__':
     )
 
     cerebro.adddata(data)
-    cerebro.addstrategy(SimplePricePattern)
+    cerebro.addstrategy(PriceSpikeStrategy)
     cerebro.addsizer(KellyCriterionSizer)
     cerebro.broker.setcash(10000)
     cerebro.broker.setcommission(commission=0.001)
