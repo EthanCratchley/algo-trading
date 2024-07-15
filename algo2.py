@@ -1,10 +1,11 @@
 import backtrader as bt
 import numpy as np
+import math
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
-        self.win_rate = 0.55  # Initial estimated win rate
-        self.payoff_ratio = 1.50  # Initial estimated payoff ratio
+        self.win_rate = 0.61  # Initial estimated win rate
+        self.payoff_ratio = 1.33  # Initial estimated payoff ratio
         self.kelly_fraction = self.calculate_kelly_fraction()
 
     def calculate_kelly_fraction(self):
@@ -19,20 +20,18 @@ class KellyCriterionSizer(bt.Sizer):
         size = (cash * self.kelly_fraction) // data.close[0]
         return size
 
-class ImprovedStopBreakoutStrategy(bt.Strategy):
+class SimplePricePattern(bt.Strategy):
     params = (
-        ('lookback', 50),
-        ('exit_after', 15),  # Exit after x bars
-        ('stop_loss', 0.02),  # Stop loss as a percentage
-        ('take_profit', 0.05),  # Take profit as a percentage
+        ('up_days', 5),
+        ('down_days', 5),
+        ('trail_percent', 0.05),  # 10% trailing take profit
     )
 
     def __init__(self):
-        self.highest_high = bt.indicators.Highest(self.data.high(-1), period=self.params.lookback)
-        self.lowest_low = bt.indicators.Lowest(self.data.low(-1), period=self.params.lookback)
-        self.buy_order = None
-        self.sell_order = None
-        self.bar_executed = 0  # To track when the order was executed
+        self.dataclose = self.datas[0].close
+        self.buy_signal = False
+        self.short_signal = False
+        self.trade_returns = []
         self.total_trades = 0
         self.total_commissions = 0
         self.total_wins = 0
@@ -41,6 +40,44 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
         self.total_loss = 0
         self.initial_value = 0
         self.final_value = 0
+        self.buy_price = None
+        self.sell_price = None
+
+    def next(self):
+        if len(self.dataclose) < max(self.params.up_days, self.params.down_days):
+            return
+
+        if all(self.dataclose[-i] > self.dataclose[-i-1] for i in range(1, self.params.up_days + 1)):
+            self.buy_signal = True
+            self.short_signal = False
+            print(f"Buy signal on {self.datas[0].datetime.date(0)} at price {self.dataclose[0]}")
+        elif all(self.dataclose[-i] < self.dataclose[-i-1] for i in range(1, self.params.down_days + 1)):
+            self.buy_signal = False
+            self.short_signal = True
+            print(f"Sell signal on {self.datas[0].datetime.date(0)} at price {self.dataclose[0]}")
+        else:
+            self.buy_signal = False
+            self.short_signal = False
+
+        if not self.position:
+            size = self.broker.get_cash() * 0.1 // self.dataclose[0]
+            if self.buy_signal:
+                self.buy_price = self.dataclose[0]
+                self.order = self.buy(size=size)
+                print(f"Buy order placed at {self.dataclose[0]} for size {size}")
+            elif self.short_signal:
+                self.sell_price = self.dataclose[0]
+                self.order = self.sell(size=size)
+                print(f"Sell order placed at {self.dataclose[0]} for size {size}")
+        else:
+            if self.position.size > 0:  # Long position
+                if self.dataclose[0] <= self.buy_price * (1 - self.params.trail_percent) or self.dataclose[0] >= self.buy_price * (1 + self.params.trail_percent):
+                    self.close()
+                    print(f"Closing long position at {self.dataclose[0]}")
+            elif self.position.size < 0:  # Short position
+                if self.dataclose[0] >= self.sell_price * (1 + self.params.trail_percent) or self.dataclose[0] <= self.sell_price * (1 - self.params.trail_percent):
+                    self.close()
+                    print(f"Closing short position at {self.dataclose[0]}")
 
     def notify_trade(self, trade):
         if trade.justopened:
@@ -54,40 +91,21 @@ class ImprovedStopBreakoutStrategy(bt.Strategy):
             else:
                 self.total_losses += 1
                 self.total_loss += abs(pnl)
-
-    def next(self):
-        if len(self.data) < self.params.lookback:
-            return  # Not enough data for the lookback period
-
-        if not self.position:  # Not in the market
-            size = self.broker.get_cash() * 0.1 // self.data.close[0]
-            if self.data.close[0] >= self.highest_high[0]:
-                self.buy_order = self.buy(size=size)
-                self.bar_executed = len(self)
-                self.stop_loss_price = self.data.close[0] * (1 - self.params.stop_loss)
-                self.take_profit_price = self.data.close[0] * (1 + self.params.take_profit)
-            elif self.data.close[0] <= self.lowest_low[0]:
-                self.sell_order = self.sell(size=size)
-                self.bar_executed = len(self)
-                self.stop_loss_price = self.data.close[0] * (1 + self.params.stop_loss)
-                self.take_profit_price = self.data.close[0] * (1 - self.params.take_profit)
-        else:
-            if self.position.size > 0:  # Long position
-                if self.data.close[0] <= self.stop_loss_price or self.data.close[0] >= self.take_profit_price:
-                    self.close()
-                elif len(self) >= self.bar_executed + self.params.exit_after:
-                    self.close()
-            elif self.position.size < 0:  # Short position
-                if self.data.close[0] >= self.stop_loss_price or self.data.close[0] <= self.take_profit_price:
-                    self.close()
-                elif len(self) >= self.bar_executed + self.params.exit_after:
-                    self.close()
+            self.trade_returns.append(pnl / trade.price)
 
     def start(self):
         self.initial_value = self.broker.getvalue()
 
     def stop(self):
         self.final_value = self.broker.getvalue()
+        if self.trade_returns:
+            average_return = sum(self.trade_returns) / len(self.trade_returns)
+            downside_returns = [r for r in self.trade_returns if r < 0]
+            downside_deviation = math.sqrt(sum(r**2 for r in downside_returns) / len(downside_returns)) if downside_returns else 0
+            sortino_ratio = average_return / downside_deviation if downside_deviation != 0 else None
+        else:
+            sortino_ratio = None
+        self.sortino_ratio = sortino_ratio
         self.win_rate = self.total_wins / self.total_trades if self.total_trades > 0 else 0
         self.average_payoff = (self.total_profit / self.total_wins) / (self.total_loss / self.total_losses) if self.total_wins > 0 and self.total_losses > 0 else 0
 
@@ -100,6 +118,8 @@ class SortinoRatio(bt.Analyzer):
             self.rets.append(trade.pnlcomm / self.strategy.broker.getvalue())
 
     def get_analysis(self):
+        if not self.rets:
+            return float('nan')
         neg_rets = [r for r in self.rets if r < 0]
         sortino_ratio = np.mean(self.rets) / (np.std(neg_rets) if neg_rets else 1)
         return sortino_ratio
@@ -115,52 +135,42 @@ class CalmarRatio(bt.Analyzer):
             self.drawdowns.append(self.strategy.analyzers.drawdown.get_analysis().max.drawdown)
 
     def get_analysis(self):
+        if not self.returns or not self.drawdowns:
+            return float('nan')
         annual_return = np.mean(self.returns) * 252  # Assuming 252 trading days in a year
-        max_drawdown = max(self.drawdowns)
-        calmar_ratio = annual_return / max_drawdown if max_drawdown else 1
+        max_drawdown = max(self.drawdowns) if self.drawdowns else float('nan')
+        calmar_ratio = annual_return / max_drawdown if max_drawdown else float('nan')
         return calmar_ratio
 
 if __name__ == '__main__':
-    # Load data
+    cerebro = bt.Cerebro()
+
     data = bt.feeds.GenericCSVData(
-        dataname='BEAM.csv',
+        dataname='fit1.csv',
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
         high=2,
         low=3,
         close=4,
-        volume=6,
-        openinterest=-1  # -1 indicates no open interest column in CSV
+        volume=5,
+        openinterest=-1
     )
 
-    # Create Cerebro engine
-    cerebro = bt.Cerebro()
-
-    # Add data to Cerebro
     cerebro.adddata(data)
-
-    # Add strategy to Cerebro
-    cerebro.addstrategy(ImprovedStopBreakoutStrategy)
-
-    # Add Kelly Criterion Sizer to Cerebro
+    cerebro.addstrategy(SimplePricePattern)
     cerebro.addsizer(KellyCriterionSizer)
+    cerebro.broker.setcash(10000)
+    cerebro.broker.setcommission(commission=0.001)
 
-    # Set our desired cash start
-    cerebro.broker.set_cash(10000)
-
-    # Set the commission
-    cerebro.broker.setcommission(commission=0.002)
-
-    # Add analyzers for performance metrics
+    # Add analyzers
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
     cerebro.addanalyzer(SortinoRatio, _name='sortino')
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
-    # Run the strategy
-    print('Ticker: AFRM')
+    print('Ticker: TSLA')
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
     results = cerebro.run()
     print('Ending Portfolio Value: %.2f' % cerebro.broker.getvalue())
@@ -184,7 +194,7 @@ if __name__ == '__main__':
     print('-----------------------------------------------------------------')
     print('Total Return:', returns['rtot'])
     print('Annualized Return:', returns['rnorm'])
-    print('Cumulative Return:', (strat.final_value - strat.initial_value) / strat.initial_value)
+    print('Cumulative Return:', (cerebro.broker.getvalue() - 10000) / 10000)
     print('-----------------------------------------------------------------')
     # Print additional performance metrics
     print('Total Commission Costs:', strat.total_commissions)
@@ -192,5 +202,5 @@ if __name__ == '__main__':
     print('Win Rate:', strat.win_rate)
     print('Average Trade Payoff Ratio:', strat.average_payoff)
 
-    # Plot the result, skip volume plotting if not available
+    # Plot the result with buy/sell markers
     cerebro.plot(volume=False)
