@@ -147,7 +147,7 @@ if __name__ == '__main__':
     cerebro.addsizer(KellyCriterionSizer)
 
     # Set our desired cash start
-    cerebro.broker.set_cash(10000.0)
+    cerebro.broker.set_cash(10000)
 
     # Set the commission
     cerebro.broker.setcommission(commission=0.002)
@@ -160,6 +160,7 @@ if __name__ == '__main__':
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # Run the strategy
+    print('Ticker: NVDA')
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
     results = cerebro.run()
     print('Ending Portfolio Value: %.2f' % cerebro.broker.getvalue())
@@ -173,17 +174,20 @@ if __name__ == '__main__':
     calmar_ratio = strat.analyzers.calmar.get_analysis()
 
     # Print the performance metrics
+    print('-----------------------------------------------------------------')
     print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
     print('Sortino Ratio:', sortino_ratio)
     print('Calmar Ratio:', calmar_ratio)
+    print('-----------------------------------------------------------------')
     print('Max Drawdown:', drawdown.max.drawdown)
     print('Max Drawdown Duration:', drawdown.max.len)
+    print('-----------------------------------------------------------------')
     print('Total Return:', returns['rtot'])
     print('Annualized Return:', returns['rnorm'])
     print('Cumulative Return:', (strat.final_value - strat.initial_value) / strat.initial_value)
-    print('Total Commission Costs:', strat.total_commissions)
-
+    print('-----------------------------------------------------------------')
     # Print additional performance metrics
+    print('Total Commission Costs:', strat.total_commissions)
     print('Total Trades:', strat.total_trades)
     print('Win Rate:', strat.win_rate)
     print('Average Trade Payoff Ratio:', strat.average_payoff)
