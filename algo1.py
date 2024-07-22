@@ -1,6 +1,7 @@
 import backtrader as bt
 import numpy as np
 import csv
+import os
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
@@ -122,9 +123,14 @@ class CalmarRatio(bt.Analyzer):
         return calmar_ratio
 
 if __name__ == '__main__':
+    # Create paths for securities and performance folders
+    securities_folder = 'securities'
+    performance_folder = 'performance'
+    os.makedirs(performance_folder, exist_ok=True)
+
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname='AAPL.csv',
+        dataname=os.path.join(securities_folder, 'AAPL.csv'),
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -167,7 +173,7 @@ if __name__ == '__main__':
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # CSV setup
-    csv_file = 'strategy_performance_AAPL.csv'
+    csv_file = os.path.join(performance_folder, 'strategy_performance_AAPL.csv')
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Lookback', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
