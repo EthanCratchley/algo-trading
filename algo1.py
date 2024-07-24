@@ -6,7 +6,7 @@ import os
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
         self.win_rate = 0.55  # Initial estimated win rate
-        self.payoff_ratio = 1.50  # Initial estimated payoff ratio
+        self.payoff_ratio = 1.55  # Initial estimated payoff ratio
         self.kelly_fraction = self.calculate_kelly_fraction()
 
     def calculate_kelly_fraction(self):
@@ -130,7 +130,7 @@ if __name__ == '__main__':
 
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname=os.path.join(securities_folder, 'AAPL.csv'),
+        dataname=os.path.join(securities_folder, 'SMCI.csv'),
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -150,8 +150,8 @@ if __name__ == '__main__':
     # Add strategy to Cerebro with optimization parameters
     cerebro.optstrategy(
         ImprovedStopBreakoutStrategy,
-        lookback=range(20, 101, 20),
-        exit_after=range(5, 21, 5),
+        lookback=range(5, 101, 5),
+        exit_after=range(5, 21, 2),
         stop_loss=[0.01, 0.02, 0.03],
         take_profit=[0.03, 0.05, 0.07]
     )
@@ -173,13 +173,13 @@ if __name__ == '__main__':
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # CSV setup
-    csv_file = os.path.join(performance_folder, 'strategy_performance_AAPL.csv')
+    csv_file = os.path.join(performance_folder, '1strategy_performance_SMCI.csv')
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Lookback', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
     # Run the optimization
-    results = cerebro.run(maxcpus=1)  # Use all available CPUs
+    results = cerebro.run()  # Use all available CPUs
 
     # Track the best strategy
     best_strat = None
