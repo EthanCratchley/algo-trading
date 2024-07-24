@@ -161,8 +161,6 @@ def parse_13f(content):
 def fetch_stock_price_data(ticker, start_date, end_date):
     stock = yf.Ticker(ticker)
     df = stock.history(start=start_date, end=end_date)
-    df.reset_index(inplace=True)
-    df['Date'] = df['Date'].dt.strftime('%Y-%m-%d')
     return df
 
 if __name__ == '__main__':
@@ -187,7 +185,7 @@ if __name__ == '__main__':
         stock_price_data = fetch_stock_price_data(ticker, start_date, end_date)
 
         # Save stock price data to CSV
-        stock_price_data.to_csv(os.path.join(securities_folder, f'{ticker}.csv'), index=False)
+        stock_price_data.to_csv(os.path.join(securities_folder, f'{ticker}.csv'))
 
         # Load data into backtrader
         data = bt.feeds.GenericCSVData(

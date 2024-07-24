@@ -1,8 +1,15 @@
 import backtrader as bt
 import numpy as np
-import math
-import os
 import csv
+import os
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
+import requests
+from io import StringIO
+
+# Global variable for insider data
+insider_data = None
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
@@ -22,18 +29,18 @@ class KellyCriterionSizer(bt.Sizer):
         size = (cash * self.kelly_fraction) // data.close[0]
         return size
 
-class SimplePricePattern(bt.Strategy):
+class InsiderTradingStrategy(bt.Strategy):
     params = (
-        ('up_days', 3),
-        ('down_days', 3),
-        ('trail_percent', 0.05),  
+        ('lookback', 50),
+        ('exit_after', 15),  # Exit after x bars
+        ('stop_loss', 0.02),  # Stop loss as a percentage
+        ('take_profit', 0.05),  # Take profit as a percentage
     )
 
     def __init__(self):
-        self.dataclose = self.datas[0].close
-        self.buy_signal = False
-        self.short_signal = False
-        self.trade_returns = []
+        self.buy_order = None
+        self.sell_order = None
+        self.bar_executed = 0  # To track when the order was executed
         self.total_trades = 0
         self.total_commissions = 0
         self.total_wins = 0
@@ -42,38 +49,6 @@ class SimplePricePattern(bt.Strategy):
         self.total_loss = 0
         self.initial_value = 0
         self.final_value = 0
-        self.buy_price = None
-        self.sell_price = None
-
-    def next(self):
-        if len(self.dataclose) < max(self.params.up_days, self.params.down_days):
-            return
-
-        if all(self.dataclose[-i] > self.dataclose[-i-1] for i in range(1, self.params.up_days + 1)):
-            self.buy_signal = True
-            self.short_signal = False
-        elif all(self.dataclose[-i] < self.dataclose[-i-1] for i in range(1, self.params.down_days + 1)):
-            self.buy_signal = False
-            self.short_signal = True
-        else:
-            self.buy_signal = False
-            self.short_signal = False
-
-        if not self.position:
-            size = self.broker.get_cash() * 0.1 // self.dataclose[0]
-            if self.buy_signal:
-                self.buy_price = self.dataclose[0]
-                self.order = self.buy(size=size)
-            elif self.short_signal:
-                self.sell_price = self.dataclose[0]
-                self.order = self.sell(size=size)
-        else:
-            if self.position.size > 0:  # Long position
-                if self.dataclose[0] <= self.buy_price * (1 - self.params.trail_percent) or self.dataclose[0] >= self.buy_price * (1 + self.params.trail_percent):
-                    self.close()
-            elif self.position.size < 0:  # Short position
-                if self.dataclose[0] >= self.sell_price * (1 + self.params.trail_percent) or self.dataclose[0] <= self.sell_price * (1 - self.params.trail_percent):
-                    self.close()
 
     def notify_trade(self, trade):
         if trade.justopened:
@@ -87,21 +62,41 @@ class SimplePricePattern(bt.Strategy):
             else:
                 self.total_losses += 1
                 self.total_loss += abs(pnl)
-            self.trade_returns.append(pnl / trade.price)
+
+    def next(self):
+        global insider_data
+        current_date = self.data.datetime.date(0)
+        for _, transaction in insider_data.iterrows():
+            if transaction['Date'].date() == current_date:
+                size = self.broker.get_cash() * 0.1 // self.data.close[0]
+                if transaction['Transaction'] == 'Sale':
+                    self.sell(size=size)
+                    self.bar_executed = len(self)
+                    self.stop_loss_price = self.data.close[0] * (1 + self.params.stop_loss)
+                    self.take_profit_price = self.data.close[0] * (1 - self.params.take_profit)
+                elif transaction['Transaction'] == 'Purchase':
+                    self.buy(size=size)
+                    self.bar_executed = len(self)
+                    self.stop_loss_price = self.data.close[0] * (1 - self.params.stop_loss)
+                    self.take_profit_price = self.data.close[0] * (1 + self.params.take_profit)
+
+        if self.position:
+            if self.position.size > 0:  # Long position
+                if self.data.close[0] <= self.stop_loss_price or self.data.close[0] >= self.take_profit_price:
+                    self.close()
+                elif len(self) >= self.bar_executed + self.params.exit_after:
+                    self.close()
+            elif self.position.size < 0:  # Short position
+                if self.data.close[0] >= self.stop_loss_price or self.data.close[0] <= self.take_profit_price:
+                    self.close()
+                elif len(self) >= self.bar_executed + self.params.exit_after:
+                    self.close()
 
     def start(self):
         self.initial_value = self.broker.getvalue()
 
     def stop(self):
         self.final_value = self.broker.getvalue()
-        if self.trade_returns:
-            average_return = sum(self.trade_returns) / len(self.trade_returns)
-            downside_returns = [r for r in self.trade_returns if r < 0]
-            downside_deviation = math.sqrt(sum(r**2 for r in downside_returns) / len(downside_returns)) if downside_returns else 0
-            sortino_ratio = average_return / downside_deviation if downside_deviation != 0 else None
-        else:
-            sortino_ratio = None
-        self.sortino_ratio = sortino_ratio
         self.win_rate = self.total_wins / self.total_trades if self.total_trades > 0 else 0
         self.average_payoff = (self.total_profit / self.total_wins) / (self.total_loss / self.total_losses) if self.total_wins > 0 and self.total_losses > 0 else 0
 
@@ -115,9 +110,7 @@ class SortinoRatio(bt.Analyzer):
 
     def get_analysis(self):
         neg_rets = [r for r in self.rets if r < 0]
-        mean_rets = np.mean(self.rets) if self.rets else 0
-        downside_deviation = np.std(neg_rets) if neg_rets else 1
-        sortino_ratio = mean_rets / downside_deviation if downside_deviation != 0 else None
+        sortino_ratio = np.mean(self.rets) / (np.std(neg_rets) if neg_rets else 1)
         return sortino_ratio
 
 class CalmarRatio(bt.Analyzer):
@@ -128,24 +121,68 @@ class CalmarRatio(bt.Analyzer):
     def notify_trade(self, trade):
         if trade.isclosed:
             self.returns.append(trade.pnlcomm / self.strategy.broker.getvalue())
-            drawdown = self.strategy.analyzers.drawdown.get_analysis().max.drawdown
-            self.drawdowns.append(drawdown)
+            self.drawdowns.append(self.strategy.analyzers.drawdown.get_analysis().max.drawdown)
 
     def get_analysis(self):
-        annual_return = np.mean(self.returns) * 252 if self.returns else 0  # Assuming 252 trading days in a year
-        max_drawdown = max(self.drawdowns) if self.drawdowns else 1
-        calmar_ratio = annual_return / max_drawdown
+        annual_return = np.mean(self.returns) * 252  # Assuming 252 trading days in a year
+        max_drawdown = max(self.drawdowns)
+        calmar_ratio = annual_return / max_drawdown if max_drawdown else 1
         return calmar_ratio
+
+def fetch_insider_data(ticker, start_date, end_date):
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    data = requests.get(url, headers=headers).text
+
+    # Debug: Print all tables
+    tables = pd.read_html(StringIO(data))
+    for idx, table in enumerate(tables):
+        print(f"Table {idx}:")
+        print(table.head())
+
+    # Assuming the table index is 11 as previously
+    df = tables[11]
+    
+    # Debug: Print the columns of the assumed insider transaction table
+    print("Columns in the insider transaction table:")
+    print(df.columns)
+
+    df['Date'] = pd.to_datetime(df['Date'], format='%b %d \'%y', errors='coerce')
+
+    filtered_df = df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
+    return filtered_df
+
+def fetch_stock_price_data(ticker, start_date, end_date):
+    stock = yf.Ticker(ticker)
+    df = stock.history(start=start_date, end=end_date)
+    df.index = pd.to_datetime(df.index).date  # Ensure index is date-only without time
+    return df
 
 if __name__ == '__main__':
     # Create paths for securities and performance folders
     securities_folder = 'securities'
-    performance_folder = 'performance2'
+    performance_folder = 'performance'
     os.makedirs(performance_folder, exist_ok=True)
 
-    # Load data
+    # Define the date range
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+
+    # Define the ticker symbol
+    ticker = 'AAPL'  # Example: Apple Inc.
+
+    # Fetch insider transaction data
+    insider_data = fetch_insider_data(ticker, start_date, end_date)
+
+    # Fetch historical stock price data
+    stock_price_data = fetch_stock_price_data(ticker, start_date, end_date)
+
+    # Save stock price data to CSV
+    stock_price_data.to_csv(os.path.join(securities_folder, f'{ticker}.csv'))
+
+    # Load data into backtrader
     data = bt.feeds.GenericCSVData(
-        dataname=os.path.join(securities_folder, 'TSLA.csv'),
+        dataname=os.path.join(securities_folder, f'{ticker}.csv'),
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -164,10 +201,11 @@ if __name__ == '__main__':
 
     # Add strategy to Cerebro with optimization parameters
     cerebro.optstrategy(
-        SimplePricePattern,
-        up_days=range(3, 22, 1),
-        down_days=range(3, 22, 1),
-        trail_percent=[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
+        InsiderTradingStrategy,
+        lookback=range(5, 101, 5),
+        exit_after=range(5, 21, 2),
+        stop_loss=[0.01, 0.02, 0.03],
+        take_profit=[0.03, 0.05, 0.07]
     )
 
     # Add Kelly Criterion Sizer to Cerebro
@@ -187,13 +225,13 @@ if __name__ == '__main__':
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # CSV setup
-    csv_file = os.path.join(performance_folder, '2strategy_performance_TSLA.csv')
+    csv_file = os.path.join(performance_folder, '1strategy_performance_AAPL.csv')
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['up_days', 'down_days', 'trail_percent', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
+        writer.writerow(['Lookback', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
     # Run the optimization
-    results = cerebro.run()  # Adjust maxcpus as needed
+    results = cerebro.run(maxcpus=1)  # Use single CPU to avoid parallel issues
 
     # Track the best strategy
     best_strat = None
@@ -216,15 +254,16 @@ if __name__ == '__main__':
         with open(csv_file, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([
-                strat[0].params.up_days,
-                strat[0].params.down_days,
-                strat[0].params.trail_percent,
+                strat[0].params.lookback,
+                strat[0].params.exit_after,
+                strat[0].params.stop_loss,
+                strat[0].params.take_profit,
                 initial_value,
                 final_value,
                 sharpe_ratio['sharperatio'],
                 sortino_ratio,
                 calmar_ratio,
-                drawdown.max.drawdown if 'max' in drawdown else None,
+                drawdown.max.drawdown,
                 returns['rtot'],
                 returns['rnorm'],
                 (final_value - initial_value) / initial_value,
@@ -243,13 +282,13 @@ if __name__ == '__main__':
         calmar_ratio = best_strat.analyzers.calmar.get_analysis()
         
         print('---------------------------------------------------------------')
-        print(f'Best Strategy Parameters - up_days: {best_strat.params.up_days}, down_days: {best_strat.params.down_days}, trail_percent: {best_strat.params.trail_percent}')
+        print(f'Best Strategy Parameters - Lookback: {best_strat.params.lookback}, Exit After: {best_strat.params.exit_after}, Stop Loss: {best_strat.params.stop_loss}, Take Profit: {best_strat.params.take_profit}')
         print('Starting Portfolio Value: %.2f' % best_strat.initial_value)
         print('Ending Portfolio Value: %.2f' % best_strat.final_value)
         print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
         print('Sortino Ratio:', sortino_ratio)
         print('Calmar Ratio:', calmar_ratio)
-        print('Max Drawdown:', drawdown.max.drawdown if 'max' in drawdown else None)
+        print('Max Drawdown:', drawdown.max.drawdown)
         print('Total Return:', returns['rtot'])
         print('Annualized Return:', returns['rnorm'])
         print('Cumulative Return:', (best_strat.final_value - best_strat.initial_value) / best_strat.initial_value)
@@ -267,10 +306,11 @@ if __name__ == '__main__':
 
         # Add the best strategy with the best parameters to Cerebro
         cerebro_best.addstrategy(
-            SimplePricePattern,
-            up_days=best_strat.params.up_days,
-            down_days=best_strat.params.down_days,
-            trail_percent=best_strat.params.trail_percent
+            InsiderTradingStrategy,
+            lookback=best_strat.params.lookback,
+            exit_after=best_strat.params.exit_after,
+            stop_loss=best_strat.params.stop_loss,
+            take_profit=best_strat.params.take_profit
         )
 
         # Add Kelly Criterion Sizer to Cerebro

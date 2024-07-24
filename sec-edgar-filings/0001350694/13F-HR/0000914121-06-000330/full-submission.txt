@@ -1,0 +1,150 @@
+-----BEGIN PRIVACY-ENHANCED MESSAGE-----
+Proc-Type: 2001,MIC-CLEAR
+Originator-Name: webmaster@www.sec.gov
+Originator-Key-Asymmetric:
+ MFgwCgYEVQgBAQICAf8DSgAwRwJAW2sNKK9AVtBzYZmr6aGjlWyK3XmZv3dTINen
+ TWSM7vrzLADbmYQaionwg5sDW3P6oaM5D3tdezXMm7z1T+B+twIDAQAB
+MIC-Info: RSA-MD5,RSA,
+ NnkZW1aSVM5y+rDgxfn7JQXGeyTa8F4J7bm//O2zVJFmvZSFjmV/cIH9aZ2lNCGd
+ vqEZ1H+kOJUPx2TFkFDUDg==
+
+<SEC-DOCUMENT>0000914121-06-000330.txt : 20060214
+<SEC-HEADER>0000914121-06-000330.hdr.sgml : 20060214
+<ACCEPTANCE-DATETIME>20060214164930
+ACCESSION NUMBER:		0000914121-06-000330
+CONFORMED SUBMISSION TYPE:	13F-HR
+PUBLIC DOCUMENT COUNT:		1
+CONFORMED PERIOD OF REPORT:	20051231
+FILED AS OF DATE:		20060214
+DATE AS OF CHANGE:		20060214
+EFFECTIVENESS DATE:		20060214
+
+FILER:
+
+	COMPANY DATA:	
+		COMPANY CONFORMED NAME:			Bridgewater Associates, Inc.
+		CENTRAL INDEX KEY:			0001350694
+		IRS NUMBER:				132871809
+		STATE OF INCORPORATION:			CT
+		FISCAL YEAR END:			1231
+
+	FILING VALUES:
+		FORM TYPE:		13F-HR
+		SEC ACT:		1934 Act
+		SEC FILE NUMBER:	028-11794
+		FILM NUMBER:		06616388
+
+	BUSINESS ADDRESS:	
+		STREET 1:		ONE GLENDINNING PLACE
+		CITY:			WESTPORT
+		STATE:			CT
+		ZIP:			06880
+		BUSINESS PHONE:		203-226-3030
+
+	MAIL ADDRESS:	
+		STREET 1:		ONE GLENDINNING PLACE
+		CITY:			WESTPORT
+		STATE:			CT
+		ZIP:			06880
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>13F-HR
+<SEQUENCE>1
+<FILENAME>bd123105-13f.txt
+<DESCRIPTION>FORM 13F
+<TEXT>
+                                  UNITED STATES
+                       SECURITIES AND EXCHANGE COMMISSION
+                             Washington, D.C. 20549
+
+                                    Form 13F
+
+                               FORM 13F COVER PAGE
+
+Report for the Calendar Year or Quarter Ended:  December 31, 2005
+                                                --------------------------------
+
+Check here if Amendment [ ]; Amendment Number:
+                                                --------------------------------
+This Amendment (Check only one.):               [ ] is a restatement.
+                                                [ ] adds new holdings entries.
+
+Institutional Investment Manager Filing this Report:
+
+Name:                Bridgewater Associates, Inc.
+                     ---------------------------------------
+Address:             One Glendinning Place
+                     ---------------------------------------
+                     Westport, CT 06880
+                     ---------------------------------------
+
+
+Form 13F File Number: 28-
+                         -------------------------
+
+The institutional investment manager filing this report and the person by whom
+it is signed hereby represent that the person signing the report is authorized
+to submit it, that all information contained herein is true, correct and
+complete, and that it is understood that all required items, statements,
+schedules, lists, and tables, are considered integral parts of this form.
+
+Person Signing this Report on Behalf of Reporting Manager:
+
+Name:                Thomas M. Sinchak
+                     ---------------------------------------
+Title:               Director of Legal & Compliance
+                     ---------------------------------------
+Phone:               (203) 226-3030
+                     ---------------------------------------
+
+Signature, Place, and Date of Signing:
+
+/s/ Thomas M. Sinchak                Westport, CT             February 14, 2006
+- -----------------------------------  -----------------------  ------------------
+[Signature]                          [City, State]            [Date]
+
+Report Type (Check only one.):
+
+[X]   13F HOLDINGS REPORT. (Check here if all holdings of this reporting manager
+      are reported in this report.)
+
+[ ]   13F NOTICE. (Check here if no holdings reported are in this report, and
+      all holdings are reported by other reporting manager(s).)
+
+[ ]   13F COMBINATION REPORT. (Check here if a portion of the holdings for
+      this reporting manager are reported in this report and a portion are
+      reported by other reporting manager(s).)
+
+<PAGE>
+
+
+                              FORM 13F SUMMARY PAGE
+
+Report Summary:
+
+
+Number of Other Included Managers:
+                                               ----------------
+
+Form 13F Information Table Entry Total:
+                                               ----------------
+
+Form 13F Information Table Value Total:
+                                               ----------------
+                                                  (thousands)
+
+Information for which confidential treatment is being requested has been omitted
+and filed separately with the Commission.
+
+List of Other Included Managers:
+
+
+Provide a numbered list of the name(s) and Form 13F file number(s) of all
+institutional investment managers with respect to which this report is filed,
+other than the manager filing this report.
+
+NONE
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>
+-----END PRIVACY-ENHANCED MESSAGE-----
