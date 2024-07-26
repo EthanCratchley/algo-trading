@@ -145,7 +145,7 @@ if __name__ == '__main__':
 
     # Load data
     data = bt.feeds.GenericCSVData(
-        dataname=os.path.join(securities_folder, 'TSLA.csv'),
+        dataname=os.path.join(securities_folder, 'ARM.csv'),
         dtformat=('%Y-%m-%d'),
         datetime=0,
         open=1,
@@ -187,7 +187,7 @@ if __name__ == '__main__':
     cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
     # CSV setup
-    csv_file = os.path.join(performance_folder, '2strategy_performance_TSLA.csv')
+    csv_file = os.path.join(performance_folder, '2strategy_performance_ARM.csv')
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['up_days', 'down_days', 'trail_percent', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])

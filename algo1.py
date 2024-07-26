@@ -3,6 +3,7 @@ import numpy as np
 import csv
 import os
 
+
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
         self.win_rate = 0.55  # Initial estimated win rate

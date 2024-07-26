@@ -1,16 +1,13 @@
 import backtrader as bt
 import numpy as np
-import csv
+import math
 import os
-import yfinance as yf
-import pandas as pd
-from datetime import datetime, timedelta
-from sec_edgar_downloader import Downloader
+import csv
 
 class KellyCriterionSizer(bt.Sizer):
     def __init__(self):
-        self.win_rate = 0.55  # Initial estimated win rate
-        self.payoff_ratio = 1.55  # Initial estimated payoff ratio
+        self.win_rate = 0.60  # Initial estimated win rate
+        self.payoff_ratio = 1.5  # Initial estimated payoff ratio
         self.kelly_fraction = self.calculate_kelly_fraction()
 
     def calculate_kelly_fraction(self):
@@ -25,19 +22,18 @@ class KellyCriterionSizer(bt.Sizer):
         size = (cash * self.kelly_fraction) // data.close[0]
         return size
 
-class HedgeFundTradingStrategy(bt.Strategy):
+class PriceSpikeStrategy(bt.Strategy):
     params = (
-        ('lookback', 50),
-        ('exit_after', 15),  # Exit after x bars
-        ('stop_loss', 0.02),  # Stop loss as a percentage
-        ('take_profit', 0.05),  # Take profit as a percentage
-        ('hedge_fund_data', None)
+        ('trail_percent', 0.05),
+        ('long_spike', 1.05),
+        ('short_spike', 0.95),
     )
 
     def __init__(self):
-        self.buy_order = None
-        self.sell_order = None
-        self.bar_executed = 0  # To track when the order was executed
+        self.dataclose = self.datas[0].close
+        self.buy_signal = False
+        self.short_signal = False
+        self.trade_returns = []
         self.total_trades = 0
         self.total_commissions = 0
         self.total_wins = 0
@@ -46,6 +42,42 @@ class HedgeFundTradingStrategy(bt.Strategy):
         self.total_loss = 0
         self.initial_value = 0
         self.final_value = 0
+        self.buy_price = None
+        self.sell_price = None
+
+    def next(self):
+        if len(self.dataclose) < 2:
+            return
+
+        # Entry conditions
+        if self.dataclose[0] >= self.dataclose[-1] * self.params.long_spike:
+            self.buy_signal = True
+            self.short_signal = False
+        elif self.dataclose[0] <= self.dataclose[-1] * self.params.short_spike:
+            self.buy_signal = False
+            self.short_signal = True
+        else:
+            self.buy_signal = False
+            self.short_signal = False
+
+        # Execute orders based on signals
+        if not self.position:
+            size = self.broker.get_cash() * 0.1 // self.dataclose[0]
+            if self.buy_signal:
+                self.buy_price = self.dataclose[0]
+                self.order = self.buy(size=size)
+            elif self.short_signal:
+                self.sell_price = self.dataclose[0]
+                self.order = self.sell(size=size)
+        else:
+            # Exit conditions for long position
+            if self.position.size > 0:
+                if self.dataclose[0] <= self.buy_price * (1 - self.params.trail_percent) or self.dataclose[0] >= self.buy_price * (1 + self.params.trail_percent):
+                    self.close()
+            # Exit conditions for short position
+            elif self.position.size < 0:
+                if self.dataclose[0] >= self.sell_price * (1 + self.params.trail_percent) or self.dataclose[0] <= self.sell_price * (1 - self.params.trail_percent):
+                    self.close()
 
     def notify_trade(self, trade):
         if trade.justopened:
@@ -59,40 +91,21 @@ class HedgeFundTradingStrategy(bt.Strategy):
             else:
                 self.total_losses += 1
                 self.total_loss += abs(pnl)
-
-    def next(self):
-        current_date = self.data.datetime.date(0)
-        for _, transaction in self.params.hedge_fund_data.iterrows():
-            if transaction['date'].date() == current_date:
-                size = self.broker.get_cash() * 0.1 // self.data.close[0]
-                if transaction['type'] == 'BUY':
-                    self.buy(size=size)
-                    self.bar_executed = len(self)
-                    self.stop_loss_price = self.data.close[0] * (1 - self.params.stop_loss)
-                    self.take_profit_price = self.data.close[0] * (1 + self.params.take_profit)
-                elif transaction['type'] == 'SELL':
-                    self.sell(size=size)
-                    self.bar_executed = len(self)
-                    self.stop_loss_price = self.data.close[0] * (1 + self.params.stop_loss)
-                    self.take_profit_price = self.data.close[0] * (1 - self.params.take_profit)
-
-        if self.position:
-            if self.position.size > 0:  # Long position
-                if self.data.close[0] <= self.stop_loss_price or self.data.close[0] >= self.take_profit_price:
-                    self.close()
-                elif len(self) >= self.bar_executed + self.params.exit_after:
-                    self.close()
-            elif self.position.size < 0:  # Short position
-                if self.data.close[0] >= self.stop_loss_price or self.data.close[0] <= self.take_profit_price:
-                    self.close()
-                elif len(self) >= self.bar_executed + self.params.exit_after:
-                    self.close()
+            self.trade_returns.append(pnl / trade.price)
 
     def start(self):
         self.initial_value = self.broker.getvalue()
 
     def stop(self):
         self.final_value = self.broker.getvalue()
+        if self.trade_returns:
+            average_return = sum(self.trade_returns) / len(self.trade_returns)
+            downside_returns = [r for r in self.trade_returns if r < 0]
+            downside_deviation = math.sqrt(sum(r**2 for r in downside_returns) / len(downside_returns)) if downside_returns else 0
+            sortino_ratio = average_return / downside_deviation if downside_deviation != 0 else None
+        else:
+            sortino_ratio = None
+        self.sortino_ratio = sortino_ratio
         self.win_rate = self.total_wins / self.total_trades if self.total_trades > 0 else 0
         self.average_payoff = (self.total_profit / self.total_wins) / (self.total_loss / self.total_losses) if self.total_wins > 0 and self.total_losses > 0 else 0
 
@@ -106,7 +119,9 @@ class SortinoRatio(bt.Analyzer):
 
     def get_analysis(self):
         neg_rets = [r for r in self.rets if r < 0]
-        sortino_ratio = np.mean(self.rets) / (np.std(neg_rets) if neg_rets else 1)
+        mean_rets = np.mean(self.rets) if self.rets else 0
+        downside_deviation = np.std(neg_rets) if neg_rets else 1
+        sortino_ratio = mean_rets / downside_deviation if downside_deviation != 0 else None
         return sortino_ratio
 
 class CalmarRatio(bt.Analyzer):
@@ -117,235 +132,171 @@ class CalmarRatio(bt.Analyzer):
     def notify_trade(self, trade):
         if trade.isclosed:
             self.returns.append(trade.pnlcomm / self.strategy.broker.getvalue())
-            self.drawdowns.append(self.strategy.analyzers.drawdown.get_analysis().max.drawdown)
+            drawdown = self.strategy.analyzers.drawdown.get_analysis().max.drawdown
+            self.drawdowns.append(drawdown)
 
     def get_analysis(self):
-        annual_return = np.mean(self.returns) * 252  # Assuming 252 trading days in a year
-        max_drawdown = max(self.drawdowns)
-        calmar_ratio = annual_return / max_drawdown if max_drawdown else 1
+        annual_return = np.mean(self.returns) * 252 if self.returns else 0  # Assuming 252 trading days in a year
+        max_drawdown = max(self.drawdowns) if self.drawdowns else 1
+        calmar_ratio = annual_return / max_drawdown
         return calmar_ratio
-
-def fetch_hedge_fund_data(cik, start_date, end_date):
-    dl = Downloader(company_name="WMB", email_address="buzz@gmail.com")
-    try:
-        dl.get("13F-HR", cik)
-        filings_path = os.path.join("sec-edgar-filings", cik, "13F-HR")
-        all_data = []
-        for root, dirs, files in os.walk(filings_path):
-            for file in files:
-                if file.endswith(".txt"):
-                    with open(os.path.join(root, file), 'r') as f:
-                        content = f.read()
-                        data = parse_13f(content)
-                        all_data.append(data)
-        hedge_fund_data = pd.concat(all_data)
-        hedge_fund_data['date'] = pd.to_datetime(hedge_fund_data['date'], errors='coerce')
-        hedge_fund_data = hedge_fund_data.dropna(subset=['date'])
-        hedge_fund_data = hedge_fund_data[(hedge_fund_data['date'] >= pd.to_datetime(start_date)) & (hedge_fund_data['date'] <= pd.to_datetime(end_date))]
-        return hedge_fund_data
-    except Exception as e:
-        print(f"Error fetching hedge fund data: {e}")
-        return None
-
-def parse_13f(content):
-    # Custom parsing logic here
-    # Return a DataFrame with columns: date, type (BUY/SELL), ticker
-    data = {
-        'date': [],
-        'type': [],
-        'ticker': []
-    }
-    # Parsing logic...
-    return pd.DataFrame(data)
-
-def fetch_stock_price_data(ticker, start_date, end_date):
-    stock = yf.Ticker(ticker)
-    df = stock.history(start=start_date, end=end_date)
-    df.reset_index(inplace=True)
-    df['Date'] = df['Date'].dt.strftime('%Y-%m-%d')
-    return df
 
 if __name__ == '__main__':
     # Create paths for securities and performance folders
     securities_folder = 'securities'
-    performance_folder = 'performance'
+    performance_folder = 'performance3'
     os.makedirs(performance_folder, exist_ok=True)
 
-    # Define the date range
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+    # Load data
+    data = bt.feeds.GenericCSVData(
+        dataname=os.path.join(securities_folder, 'TSLA.csv'),
+        dtformat=('%Y-%m-%d'),
+        datetime=0,
+        open=1,
+        high=2,
+        low=3,
+        close=4,
+        volume=6,
+        openinterest=-1  # -1 indicates no open interest column in CSV
+    )
 
-    # Define the CIK and ticker symbol
-    cik = '0001350694'  # Bridgewater Associates
-    ticker = 'GOOGL'  # Example: Alphabet Inc.
+    # Create Cerebro engine
+    cerebro = bt.Cerebro(optreturn=False)
 
-    # Fetch hedge fund transaction data
-    hedge_fund_data = fetch_hedge_fund_data(cik, start_date, end_date)
+    # Add data to Cerebro
+    cerebro.adddata(data)
 
-    if hedge_fund_data is not None:
-        # Fetch historical stock price data
-        stock_price_data = fetch_stock_price_data(ticker, start_date, end_date)
+    # Add strategy to Cerebro with optimization parameters
+    cerebro.optstrategy(
+        PriceSpikeStrategy,
+        trail_percent=[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1],
+        long_spike=[1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.1],
+        short_spike=[0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97]
+    )
 
-        # Save stock price data to CSV
-        stock_price_data.to_csv(os.path.join(securities_folder, f'{ticker}.csv'), index=False)
+    # Add Kelly Criterion Sizer to Cerebro
+    cerebro.addsizer(KellyCriterionSizer)
 
-        # Load data into backtrader
-        data = bt.feeds.GenericCSVData(
-            dataname=os.path.join(securities_folder, f'{ticker}.csv'),
-            dtformat=('%Y-%m-%d'),
-            datetime=0,
-            open=1,
-            high=2,
-            low=3,
-            close=4,
-            volume=6,
-            openinterest=-1  # -1 indicates no open interest column in CSV
-        )
+    # Set our desired cash start
+    cerebro.broker.set_cash(10000)
 
-        # Create Cerebro engine
-        cerebro = bt.Cerebro(optreturn=False)
+    # Set the commission
+    cerebro.broker.setcommission(commission=0.002)
+
+    # Add analyzers for performance metrics
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+    cerebro.addanalyzer(SortinoRatio, _name='sortino')
+    cerebro.addanalyzer(CalmarRatio, _name='calmar')
+
+    # CSV setup
+    csv_file = os.path.join(performance_folder, '3strategy_performance_TSLA.csv')
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['trail_percent', 'long_spike', 'short_spike', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
+
+    # Run the optimization
+    results = cerebro.run()  # Adjust maxcpus as needed
+
+    # Track the best strategy
+    best_strat = None
+    best_sharpe = -np.inf  # Use negative infinity to ensure any valid Sharpe ratio will be better
+
+    for strat in results:
+        sharpe_ratio = strat[0].analyzers.sharpe.get_analysis()
+        if sharpe_ratio['sharperatio'] is not None and sharpe_ratio['sharperatio'] > best_sharpe:
+            best_sharpe = sharpe_ratio['sharperatio']
+            best_strat = strat[0]
+
+        # Write each strategy's performance to CSV
+        drawdown = strat[0].analyzers.drawdown.get_analysis()
+        returns = strat[0].analyzers.returns.get_analysis()
+        sortino_ratio = strat[0].analyzers.sortino.get_analysis()
+        calmar_ratio = strat[0].analyzers.calmar.get_analysis()
+        initial_value = strat[0].initial_value
+        final_value = strat[0].final_value
+
+        with open(csv_file, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                strat[0].params.trail_percent,
+                strat[0].params.long_spike,
+                strat[0].params.short_spike,
+                initial_value,
+                final_value,
+                sharpe_ratio['sharperatio'],
+                sortino_ratio,
+                calmar_ratio,
+                drawdown.max.drawdown if 'max' in drawdown else None,
+                returns['rtot'],
+                returns['rnorm'],
+                (final_value - initial_value) / initial_value,
+                strat[0].total_commissions,
+                strat[0].total_trades,
+                strat[0].win_rate,
+                strat[0].average_payoff
+            ])
+
+    # Print out the best strategy's result
+    if best_strat is not None:
+        sharpe_ratio = best_strat.analyzers.sharpe.get_analysis()
+        drawdown = best_strat.analyzers.drawdown.get_analysis()
+        returns = best_strat.analyzers.returns.get_analysis()
+        sortino_ratio = best_strat.analyzers.sortino.get_analysis()
+        calmar_ratio = best_strat.analyzers.calmar.get_analysis()
+        
+        print('---------------------------------------------------------------')
+        print(f'Best Strategy Parameters - trail_percent: {best_strat.params.trail_percent}, long_spike: {best_strat.params.long_spike}, short_spike: {best_strat.params.short_spike}')
+        print('Starting Portfolio Value: %.2f' % best_strat.initial_value)
+        print('Ending Portfolio Value: %.2f' % best_strat.final_value)
+        print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
+        print('Sortino Ratio:', sortino_ratio)
+        print('Calmar Ratio:', calmar_ratio)
+        print('Max Drawdown:', drawdown.max.drawdown if 'max' in drawdown else None)
+        print('Total Return:', returns['rtot'])
+        print('Annualized Return:', returns['rnorm'])
+        print('Cumulative Return:', (best_strat.final_value - best_strat.initial_value) / best_strat.initial_value)
+        print('Total Commission Costs:', best_strat.total_commissions)
+        print('Total Trades:', best_strat.total_trades)
+        print('Win Rate:', best_strat.win_rate)
+        print('Average Trade Payoff Ratio:', best_strat.average_payoff)
+        print('---------------------------------------------------------------')
+
+        # Create a new Cerebro instance for plotting the best strategy
+        cerebro_best = bt.Cerebro()
 
         # Add data to Cerebro
-        cerebro.adddata(data)
+        cerebro_best.adddata(data)
 
-        # Add strategy to Cerebro with optimization parameters
-        cerebro.optstrategy(
-            HedgeFundTradingStrategy,
-            lookback=range(5, 101, 5),
-            exit_after=range(5, 21, 2),
-            stop_loss=[0.01, 0.02, 0.03],
-            take_profit=[0.03, 0.05, 0.07],
-            hedge_fund_data=hedge_fund_data
+        # Add the best strategy with the best parameters to Cerebro
+        cerebro_best.addstrategy(
+            PriceSpikeStrategy,
+            trail_percent=best_strat.params.trail_percent,
+            long_spike=best_strat.params.long_spike,
+            short_spike=best_strat.params.short_spike
         )
 
         # Add Kelly Criterion Sizer to Cerebro
-        cerebro.addsizer(KellyCriterionSizer)
+        cerebro_best.addsizer(KellyCriterionSizer)
 
         # Set our desired cash start
-        cerebro.broker.set_cash(10000)
+        cerebro_best.broker.set_cash(10000)
 
         # Set the commission
-        cerebro.broker.setcommission(commission=0.002)
+        cerebro_best.broker.setcommission(commission=0.002)
 
         # Add analyzers for performance metrics
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-        cerebro.addanalyzer(SortinoRatio, _name='sortino')
-        cerebro.addanalyzer(CalmarRatio, _name='calmar')
+        cerebro_best.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro_best.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+        cerebro_best.addanalyzer(bt.analyzers.Returns, _name='returns')
+        cerebro_best.addanalyzer(SortinoRatio, _name='sortino')
+        cerebro_best.addanalyzer(CalmarRatio, _name='calmar')
 
-        # CSV setup
-        csv_file = os.path.join(performance_folder, 'hedge_fund_strategy_performance.csv')
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['Lookback', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
+        # Run the best strategy
+        cerebro_best.run()
 
-        # Run the optimization
-        results = cerebro.run()  # Use all available CPUs
-
-        # Track the best strategy
-        best_strat = None
-        best_sharpe = -np.inf  # Use negative infinity to ensure any valid Sharpe ratio will be better
-
-        for strat in results:
-            sharpe_ratio = strat[0].analyzers.sharpe.get_analysis()
-            if sharpe_ratio['sharperatio'] is not None and sharpe_ratio['sharperatio'] > best_sharpe:
-                best_sharpe = sharpe_ratio['sharperatio']
-                best_strat = strat[0]
-
-            # Write each strategy's performance to CSV
-            drawdown = strat[0].analyzers.drawdown.get_analysis()
-            returns = strat[0].analyzers.returns.get_analysis()
-            sortino_ratio = strat[0].analyzers.sortino.get_analysis()
-            calmar_ratio = strat[0].analyzers.calmar.get_analysis()
-            initial_value = strat[0].initial_value
-            final_value = strat[0].final_value
-
-            with open(csv_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([
-                    strat[0].params.lookback,
-                    strat[0].params.exit_after,
-                    strat[0].params.stop_loss,
-                    strat[0].params.take_profit,
-                    initial_value,
-                    final_value,
-                    sharpe_ratio['sharperatio'],
-                    sortino_ratio,
-                    calmar_ratio,
-                    drawdown.max.drawdown,
-                    returns['rtot'],
-                    returns['rnorm'],
-                    (final_value - initial_value) / initial_value,
-                    strat[0].total_commissions,
-                    strat[0].total_trades,
-                    strat[0].win_rate,
-                    strat[0].average_payoff
-                ])
-
-        # Print out the best strategy's result
-        if best_strat is not None:
-            sharpe_ratio = best_strat.analyzers.sharpe.get_analysis()
-            drawdown = best_strat.analyzers.drawdown.get_analysis()
-            returns = best_strat.analyzers.returns.get_analysis()
-            sortino_ratio = best_strat.analyzers.sortino.get_analysis()
-            calmar_ratio = best_strat.analyzers.calmar.get_analysis()
-            
-            print('---------------------------------------------------------------')
-            print(f'Best Strategy Parameters - Lookback: {best_strat.params.lookback}, Exit After: {best_strat.params.exit_after}, Stop Loss: {best_strat.params.stop_loss}, Take Profit: {best_strat.params.take_profit}')
-            print('Starting Portfolio Value: %.2f' % best_strat.initial_value)
-            print('Ending Portfolio Value: %.2f' % best_strat.final_value)
-            print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
-            print('Sortino Ratio:', sortino_ratio)
-            print('Calmar Ratio:', calmar_ratio)
-            print('Max Drawdown:', drawdown.max.drawdown)
-            print('Total Return:', returns['rtot'])
-            print('Annualized Return:', returns['rnorm'])
-            print('Cumulative Return:', (best_strat.final_value - best_strat.initial_value) / best_strat.initial_value)
-            print('Total Commission Costs:', best_strat.total_commissions)
-            print('Total Trades:', best_strat.total_trades)
-            print('Win Rate:', best_strat.win_rate)
-            print('Average Trade Payoff Ratio:', best_strat.average_payoff)
-            print('---------------------------------------------------------------')
-
-            # Create a new Cerebro instance for plotting the best strategy
-            cerebro_best = bt.Cerebro()
-
-            # Add data to Cerebro
-            cerebro_best.adddata(data)
-
-            # Add the best strategy with the best parameters to Cerebro
-            cerebro_best.addstrategy(
-                HedgeFundTradingStrategy,
-                lookback=best_strat.params.lookback,
-                exit_after=best_strat.params.exit_after,
-                stop_loss=best_strat.params.stop_loss,
-                take_profit=best_strat.params.take_profit,
-                hedge_fund_data=hedge_fund_data
-            )
-
-            # Add Kelly Criterion Sizer to Cerebro
-            cerebro_best.addsizer(KellyCriterionSizer)
-
-            # Set our desired cash start
-            cerebro_best.broker.set_cash(10000)
-
-            # Set the commission
-            cerebro_best.broker.setcommission(commission=0.002)
-
-            # Add analyzers for performance metrics
-            cerebro_best.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-            cerebro_best.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-            cerebro_best.addanalyzer(bt.analyzers.Returns, _name='returns')
-            cerebro_best.addanalyzer(SortinoRatio, _name='sortino')
-            cerebro_best.addanalyzer(CalmarRatio, _name='calmar')
-
-            # Run the best strategy
-            cerebro_best.run()
-
-            # Plot the result for the best strategy
-            cerebro_best.plot(volume=False)
-        else:
-            print("No valid strategy found.")
+        # Plot the result for the best strategy
+        cerebro_best.plot(volume=False)
     else:
-        print("No hedge fund data found. Exiting.")
+        print("No valid strategy found.")
