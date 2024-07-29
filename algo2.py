@@ -138,161 +138,165 @@ class CalmarRatio(bt.Analyzer):
         return calmar_ratio
 
 if __name__ == '__main__':
+    # List of securities
+    securities = ['ARM', 'AAPL', 'TSLA']
+
     # Create paths for securities and performance folders
     securities_folder = 'securities'
     performance_folder = 'performance2'
     os.makedirs(performance_folder, exist_ok=True)
 
-    # Load data
-    data = bt.feeds.GenericCSVData(
-        dataname=os.path.join(securities_folder, 'ARM.csv'),
-        dtformat=('%Y-%m-%d'),
-        datetime=0,
-        open=1,
-        high=2,
-        low=3,
-        close=4,
-        volume=6,
-        openinterest=-1  # -1 indicates no open interest column in CSV
-    )
+    for security in securities:
+        # Load data
+        data = bt.feeds.GenericCSVData(
+            dataname=os.path.join(securities_folder, f'{security}.csv'),
+            dtformat=('%Y-%m-%d'),
+            datetime=0,
+            open=1,
+            high=2,
+            low=3,
+            close=4,
+            volume=6,
+            openinterest=-1  # -1 indicates no open interest column in CSV
+        )
 
-    # Create Cerebro engine
-    cerebro = bt.Cerebro(optreturn=False)
-
-    # Add data to Cerebro
-    cerebro.adddata(data)
-
-    # Add strategy to Cerebro with optimization parameters
-    cerebro.optstrategy(
-        SimplePricePattern,
-        up_days=range(3, 22, 1),
-        down_days=range(3, 22, 1),
-        trail_percent=[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
-    )
-
-    # Add Kelly Criterion Sizer to Cerebro
-    cerebro.addsizer(KellyCriterionSizer)
-
-    # Set our desired cash start
-    cerebro.broker.set_cash(10000)
-
-    # Set the commission
-    cerebro.broker.setcommission(commission=0.002)
-
-    # Add analyzers for performance metrics
-    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-    cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-    cerebro.addanalyzer(SortinoRatio, _name='sortino')
-    cerebro.addanalyzer(CalmarRatio, _name='calmar')
-
-    # CSV setup
-    csv_file = os.path.join(performance_folder, '2strategy_performance_ARM.csv')
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['up_days', 'down_days', 'trail_percent', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
-
-    # Run the optimization
-    results = cerebro.run()  # Adjust maxcpus as needed
-
-    # Track the best strategy
-    best_strat = None
-    best_sharpe = -np.inf  # Use negative infinity to ensure any valid Sharpe ratio will be better
-
-    for strat in results:
-        sharpe_ratio = strat[0].analyzers.sharpe.get_analysis()
-        if sharpe_ratio['sharperatio'] is not None and sharpe_ratio['sharperatio'] > best_sharpe:
-            best_sharpe = sharpe_ratio['sharperatio']
-            best_strat = strat[0]
-
-        # Write each strategy's performance to CSV
-        drawdown = strat[0].analyzers.drawdown.get_analysis()
-        returns = strat[0].analyzers.returns.get_analysis()
-        sortino_ratio = strat[0].analyzers.sortino.get_analysis()
-        calmar_ratio = strat[0].analyzers.calmar.get_analysis()
-        initial_value = strat[0].initial_value
-        final_value = strat[0].final_value
-
-        with open(csv_file, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([
-                strat[0].params.up_days,
-                strat[0].params.down_days,
-                strat[0].params.trail_percent,
-                initial_value,
-                final_value,
-                sharpe_ratio['sharperatio'],
-                sortino_ratio,
-                calmar_ratio,
-                drawdown.max.drawdown if 'max' in drawdown else None,
-                returns['rtot'],
-                returns['rnorm'],
-                (final_value - initial_value) / initial_value,
-                strat[0].total_commissions,
-                strat[0].total_trades,
-                strat[0].win_rate,
-                strat[0].average_payoff
-            ])
-
-    # Print out the best strategy's result
-    if best_strat is not None:
-        sharpe_ratio = best_strat.analyzers.sharpe.get_analysis()
-        drawdown = best_strat.analyzers.drawdown.get_analysis()
-        returns = best_strat.analyzers.returns.get_analysis()
-        sortino_ratio = best_strat.analyzers.sortino.get_analysis()
-        calmar_ratio = best_strat.analyzers.calmar.get_analysis()
-        
-        print('---------------------------------------------------------------')
-        print(f'Best Strategy Parameters - up_days: {best_strat.params.up_days}, down_days: {best_strat.params.down_days}, trail_percent: {best_strat.params.trail_percent}')
-        print('Starting Portfolio Value: %.2f' % best_strat.initial_value)
-        print('Ending Portfolio Value: %.2f' % best_strat.final_value)
-        print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
-        print('Sortino Ratio:', sortino_ratio)
-        print('Calmar Ratio:', calmar_ratio)
-        print('Max Drawdown:', drawdown.max.drawdown if 'max' in drawdown else None)
-        print('Total Return:', returns['rtot'])
-        print('Annualized Return:', returns['rnorm'])
-        print('Cumulative Return:', (best_strat.final_value - best_strat.initial_value) / best_strat.initial_value)
-        print('Total Commission Costs:', best_strat.total_commissions)
-        print('Total Trades:', best_strat.total_trades)
-        print('Win Rate:', best_strat.win_rate)
-        print('Average Trade Payoff Ratio:', best_strat.average_payoff)
-        print('---------------------------------------------------------------')
-
-        # Create a new Cerebro instance for plotting the best strategy
-        cerebro_best = bt.Cerebro()
+        # Create Cerebro engine
+        cerebro = bt.Cerebro(optreturn=False)
 
         # Add data to Cerebro
-        cerebro_best.adddata(data)
+        cerebro.adddata(data)
 
-        # Add the best strategy with the best parameters to Cerebro
-        cerebro_best.addstrategy(
+        # Add strategy to Cerebro with optimization parameters
+        cerebro.optstrategy(
             SimplePricePattern,
-            up_days=best_strat.params.up_days,
-            down_days=best_strat.params.down_days,
-            trail_percent=best_strat.params.trail_percent
+            up_days=range(3, 22, 1),
+            down_days=range(3, 22, 1),
+            trail_percent=[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
         )
 
         # Add Kelly Criterion Sizer to Cerebro
-        cerebro_best.addsizer(KellyCriterionSizer)
+        cerebro.addsizer(KellyCriterionSizer)
 
         # Set our desired cash start
-        cerebro_best.broker.set_cash(10000)
+        cerebro.broker.set_cash(10000)
 
         # Set the commission
-        cerebro_best.broker.setcommission(commission=0.002)
+        cerebro.broker.setcommission(commission=0.002)
 
         # Add analyzers for performance metrics
-        cerebro_best.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro_best.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-        cerebro_best.addanalyzer(bt.analyzers.Returns, _name='returns')
-        cerebro_best.addanalyzer(SortinoRatio, _name='sortino')
-        cerebro_best.addanalyzer(CalmarRatio, _name='calmar')
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+        cerebro.addanalyzer(SortinoRatio, _name='sortino')
+        cerebro.addanalyzer(CalmarRatio, _name='calmar')
 
-        # Run the best strategy
-        cerebro_best.run()
+        # CSV setup
+        csv_file = os.path.join(performance_folder, f'2strategy_performance_{security}.csv')
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['up_days', 'down_days', 'trail_percent', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
-        # Plot the result for the best strategy
-        cerebro_best.plot(volume=False)
-    else:
-        print("No valid strategy found.")
+        # Run the optimization
+        results = cerebro.run()  # Adjust maxcpus as needed
+
+        # Track the best strategy
+        best_strat = None
+        best_sharpe = -np.inf  # Use negative infinity to ensure any valid Sharpe ratio will be better
+
+        for strat in results:
+            sharpe_ratio = strat[0].analyzers.sharpe.get_analysis()
+            if sharpe_ratio['sharperatio'] is not None and sharpe_ratio['sharperatio'] > best_sharpe:
+                best_sharpe = sharpe_ratio['sharperatio']
+                best_strat = strat[0]
+
+            # Write each strategy's performance to CSV
+            drawdown = strat[0].analyzers.drawdown.get_analysis()
+            returns = strat[0].analyzers.returns.get_analysis()
+            sortino_ratio = strat[0].analyzers.sortino.get_analysis()
+            calmar_ratio = strat[0].analyzers.calmar.get_analysis()
+            initial_value = strat[0].initial_value
+            final_value = strat[0].final_value
+
+            with open(csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([
+                    strat[0].params.up_days,
+                    strat[0].params.down_days,
+                    strat[0].params.trail_percent,
+                    initial_value,
+                    final_value,
+                    sharpe_ratio['sharperatio'],
+                    sortino_ratio,
+                    calmar_ratio,
+                    drawdown.max.drawdown if 'max' in drawdown else None,
+                    returns['rtot'],
+                    returns['rnorm'],
+                    (final_value - initial_value) / initial_value,
+                    strat[0].total_commissions,
+                    strat[0].total_trades,
+                    strat[0].win_rate,
+                    strat[0].average_payoff
+                ])
+
+        # Print out the best strategy's result
+        if best_strat is not None:
+            sharpe_ratio = best_strat.analyzers.sharpe.get_analysis()
+            drawdown = best_strat.analyzers.drawdown.get_analysis()
+            returns = best_strat.analyzers.returns.get_analysis()
+            sortino_ratio = best_strat.analyzers.sortino.get_analysis()
+            calmar_ratio = best_strat.analyzers.calmar.get_analysis()
+            
+            print('---------------------------------------------------------------')
+            print(f'Best Strategy Parameters for {security} - up_days: {best_strat.params.up_days}, down_days: {best_strat.params.down_days}, trail_percent: {best_strat.params.trail_percent}')
+            print('Starting Portfolio Value: %.2f' % best_strat.initial_value)
+            print('Ending Portfolio Value: %.2f' % best_strat.final_value)
+            print('Sharpe Ratio:', sharpe_ratio['sharperatio'])
+            print('Sortino Ratio:', sortino_ratio)
+            print('Calmar Ratio:', calmar_ratio)
+            print('Max Drawdown:', drawdown.max.drawdown if 'max' in drawdown else None)
+            print('Total Return:', returns['rtot'])
+            print('Annualized Return:', returns['rnorm'])
+            print('Cumulative Return:', (best_strat.final_value - best_strat.initial_value) / best_strat.initial_value)
+            print('Total Commission Costs:', best_strat.total_commissions)
+            print('Total Trades:', best_strat.total_trades)
+            print('Win Rate:', best_strat.win_rate)
+            print('Average Trade Payoff Ratio:', best_strat.average_payoff)
+            print('---------------------------------------------------------------')
+
+            # Create a new Cerebro instance for plotting the best strategy
+            cerebro_best = bt.Cerebro()
+
+            # Add data to Cerebro
+            cerebro_best.adddata(data)
+
+            # Add the best strategy with the best parameters to Cerebro
+            cerebro_best.addstrategy(
+                SimplePricePattern,
+                up_days=best_strat.params.up_days,
+                down_days=best_strat.params.down_days,
+                trail_percent=best_strat.params.trail_percent
+            )
+
+            # Add Kelly Criterion Sizer to Cerebro
+            cerebro_best.addsizer(KellyCriterionSizer)
+
+            # Set our desired cash start
+            cerebro_best.broker.set_cash(10000)
+
+            # Set the commission
+            cerebro_best.broker.setcommission(commission=0.002)
+
+            # Add analyzers for performance metrics
+            cerebro_best.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+            cerebro_best.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+            cerebro_best.addanalyzer(bt.analyzers.Returns, _name='returns')
+            cerebro_best.addanalyzer(SortinoRatio, _name='sortino')
+            cerebro_best.addanalyzer(CalmarRatio, _name='calmar')
+
+            # Run the best strategy
+            cerebro_best.run()
+
+            # Plot the result for the best strategy
+            cerebro_best.plot(volume=False)
+        else:
+            print(f"No valid strategy found for {security}.")
