@@ -126,7 +126,7 @@ class CalmarRatio(bt.Analyzer):
 
 if __name__ == '__main__':
     # List of securities
-    securities = ['DBX', 'MSFT']
+    securities = ['AAON', 'AEO', 'ASB', 'AVGO', 'CCJ', 'CEG', 'DELL', 'ESTC', 'MU', 'NVT', 'PAAS', 'SNV', 'TDS', 'TSM', 'VLO', 'VST']
 
     # Create paths for securities and performance folders
     securities_folder = 'securities'
@@ -134,7 +134,10 @@ if __name__ == '__main__':
     os.makedirs(performance_folder, exist_ok=True)
 
     for security in securities:
-        # Load data
+        data_file = os.path.join(securities_folder, f'{security}.csv')
+        if not os.path.exists(data_file):
+            print(f"Data file for {security} not found. Skipping.")
+            continue
         data = bt.feeds.GenericCSVData(
             dataname=os.path.join(securities_folder, f'{security}.csv'),
             dtformat=('%Y-%m-%d'),
@@ -156,10 +159,10 @@ if __name__ == '__main__':
         # Add strategy to Cerebro with optimization parameters
         cerebro.optstrategy(
             DuelingMomentumStrategy,
-            short_period=range(5, 25, 2),
-            long_period=range(35, 101, 5),
-            exit_after=range(3, 25, 2),
-            stop_loss=[0.01, 0.02, 0.03, 0.04, 0.05],
+            short_period=range(3, 36, 2),
+            long_period=range(37, 101, 3),
+            exit_after=range(2, 36, 2),
+            stop_loss=[0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09],
             take_profit=[0.03, 0.05, 0.07, 0.09]
         )
 
@@ -186,7 +189,7 @@ if __name__ == '__main__':
             writer.writerow(['Short Period', 'Long Period', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
         # Run the optimization
-        results = cerebro.run()  # Use all available CPUs
+        results = cerebro.run(maxcpus=1)  # Use all available CPUs
 
         # Track the best strategy
         best_strat = None
@@ -290,6 +293,8 @@ if __name__ == '__main__':
             cerebro_best.run()
 
             # Plot the result for the best strategy
-            cerebro_best.plot(volume=False)
+            #cerebro_best.plot(volume=False)
         else:
             print(f"No valid strategy found for {security}.")
+
+# securities = ['AAON', 'AEO', 'ASB', 'AVGO', 'CCJ', 'CEG', 'DELL', 'ESTC', 'MU', 'NVT', 'PAAS', 'SNV', 'TDS', 'TSM', 'VLO', 'VST']

@@ -124,7 +124,7 @@ class CalmarRatio(bt.Analyzer):
 
 if __name__ == '__main__':
     # List of securities
-    securities = ['DBX', 'MSFT']
+    securities = ['ERJ', 'KBH', 'NTLA', 'SGRY', 'THC', 'TSLA', 'UPST', 'URBN', 'VNO', 'WHD']
 
     # Create paths for securities and performance folders
     securities_folder = 'securities'
@@ -132,7 +132,10 @@ if __name__ == '__main__':
     os.makedirs(performance_folder, exist_ok=True)
 
     for security in securities:
-        # Load data
+        data_file = os.path.join(securities_folder, f'{security}.csv')
+        if not os.path.exists(data_file):
+            print(f"Data file for {security} not found. Skipping.")
+            continue
         data = bt.feeds.GenericCSVData(
             dataname=os.path.join(securities_folder, f'{security}.csv'),
             dtformat=('%Y-%m-%d'),
@@ -154,10 +157,10 @@ if __name__ == '__main__':
         # Add strategy to Cerebro with optimization parameters
         cerebro.optstrategy(
             ImprovedStopBreakoutStrategy,
-            lookback=range(5, 101, 5),
-            exit_after=range(5, 21, 2),
-            stop_loss=[0.01, 0.02, 0.03],
-            take_profit=[0.03, 0.05, 0.07]
+            lookback=range(3, 101, 2),
+            exit_after=range(3, 35, 2),
+            stop_loss=[0.01, 0.02, 0.03, 0.05, 0.07],
+            take_profit=[0.03, 0.05, 0.07, 0.09]
         )
 
         # Add Kelly Criterion Sizer to Cerebro
@@ -183,7 +186,7 @@ if __name__ == '__main__':
             writer.writerow(['Lookback', 'Exit After', 'Stop Loss', 'Take Profit', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
         # Run the optimization
-        results = cerebro.run()  # Use all available CPUs
+        results = cerebro.run(maxcpus=1)  # Use all available CPUs
 
         # Track the best strategy
         best_strat = None
@@ -285,6 +288,6 @@ if __name__ == '__main__':
             cerebro_best.run()
 
             # Plot the result for the best strategy
-            cerebro_best.plot(volume=False)
+            #cerebro_best.plot(volume=False)
         else:
             print(f"No valid strategy found for {security}.")

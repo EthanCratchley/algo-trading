@@ -143,15 +143,18 @@ class CalmarRatio(bt.Analyzer):
 
 if __name__ == '__main__':
     # List of securities
-    securities = ['TSLA', 'AAPL', 'GOOGL']
-
+    securities = ['ADNT', 'BRBR', 'CRWD', 'FL', 'GH', 'GLBE', 'LNTH', 'NE', 'QS', 'SGRY', 'SOFI', 'VKTX', 'XPO']    
+   
     # Create paths for securities and performance folders
     securities_folder = 'securities'
     performance_folder = 'performance3'
     os.makedirs(performance_folder, exist_ok=True)
 
     for security in securities:
-        # Load data
+        data_file = os.path.join(securities_folder, f'{security}.csv')
+        if not os.path.exists(data_file):
+            print(f"Data file for {security} not found. Skipping.")
+            continue
         data = bt.feeds.GenericCSVData(
             dataname=os.path.join(securities_folder, f'{security}.csv'),
             dtformat=('%Y-%m-%d'),
@@ -201,7 +204,7 @@ if __name__ == '__main__':
             writer.writerow(['trail_percent', 'long_spike', 'short_spike', 'Starting Value', 'Ending Value', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Max Drawdown', 'Total Return', 'Annualized Return', 'Cumulative Return', 'Total Commission Costs', 'Total Trades', 'Win Rate', 'Average Trade Payoff Ratio'])
 
         # Run the optimization
-        results = cerebro.run()  # Adjust maxcpus as needed
+        results = cerebro.run(maxcpus=1)  # Adjust maxcpus as needed
 
         # Track the best strategy
         best_strat = None
@@ -301,6 +304,8 @@ if __name__ == '__main__':
             cerebro_best.run()
 
             # Plot the result for the best strategy
-            cerebro_best.plot(volume=False)
+            #cerebro_best.plot(volume=False)
         else:
             print(f"No valid strategy found for {security}.")
+
+# securities = ['ADNT', 'BRBR', 'CRWD', 'FL', 'GH', 'GLBE', 'LNTH', 'NE', 'QS', 'SGRY', 'SOFI', 'VKTX', 'XPO']
